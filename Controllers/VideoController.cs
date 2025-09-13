@@ -12,6 +12,8 @@ using SixLabors.ImageSharp.PixelFormats;
 using TorchSharp;
 using static TorchSharp.torch;
 using static WebApiHelper;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Hosting.Server;
 
 namespace videoprocess.Controllers;
 
@@ -20,10 +22,12 @@ namespace videoprocess.Controllers;
 [Produces("application/json")]
 [ApiController]
 
-public class VideoController(MilvusImageService service, ILogger<VideoController> _logger) : ControllerBase
+public class VideoController(MilvusImageService milvusService, ILogger<VideoController> logger, IServer server) : ControllerBase
 {
-    private readonly MilvusImageService _service = service;
-    private readonly ILogger<VideoController> logger= _logger;
+    private readonly MilvusImageService _milvusService = milvusService;
+    private readonly ILogger<VideoController> _logger = logger;
+    private readonly IServer _server = server;
+
     static string Bluray => "bluray:";
     readonly Dictionary<string, string> dic = new()
     {
@@ -38,15 +42,19 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
         ["vp8"] = "vp8_cuvid",
         ["vp9"] = "vp9_cuvid"
     };
-  
+    public async Task<IActionResult> SubittleProcessAsync()
+    {
+        //todo 
+        return Ok();
+  }
     public async Task<IActionResult> VideoProcessAsync(List<Dictionary<string , string>> pathList, CancellationToken cancellationToken)
     {
         var videopath = (await Task.WhenAll(pathList.Select(x => ProcessFolder(x["path"],x["virtualDisk"], cancellationToken)))).SelectMany(x => x);
-        bool exists = await _service._milvusClient.HasCollectionAsync(_service.CollectionName, cancellationToken: cancellationToken);
+        bool exists = await _milvusService.MilvusClient.HasCollectionAsync(_milvusService.CollectionName, cancellationToken: cancellationToken);
       
         if (!exists)
         {
-            await _service._milvusClient.CreateCollectionAsync(_service.CollectionName, new CollectionSchema
+            await _milvusService.MilvusClient.CreateCollectionAsync(_milvusService.CollectionName, new CollectionSchema
             {
                 Fields = {
             FieldSchema.Create("id", MilvusDataType.Int64,true,true),
@@ -56,7 +64,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
         FieldSchema.Create("timestamp", MilvusDataType.Float, description: "帧时间戳（秒）")
         }
             }, cancellationToken: cancellationToken);
-            await _service.MilvusCollection.CreateIndexAsync(fieldName: "embedding", indexType: IndexType.IvfFlat, metricType: SimilarityMetricType.L2, indexName: "idx_embedding", extraParams: new Dictionary<string, string>
+            await _milvusService.MilvusCollection.CreateIndexAsync(fieldName: "embedding", indexType: IndexType.IvfFlat, metricType: SimilarityMetricType.L2, indexName: "idx_embedding", extraParams: new Dictionary<string, string>
                    {
             { "nlist", "1024" } 
                    }
@@ -77,7 +85,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
             }, async (item, ct) =>
             {
                 var expr = $"path_sha256 == '{item.sha256}'";
-                var query = await _service.MilvusCollection.QueryAsync(expr, parameters, ct);
+                var query = await _milvusService.MilvusCollection.QueryAsync(expr, parameters, ct);
                 if (query?.Count > 0 && query[0] is FieldData<string> filePathField)
                 {
                     foreach (var x in filePathField.Data)
@@ -97,18 +105,18 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
             return Ok("not found any video file, skipping...");
         }
         
-        await Parallel.ForEachAsync(videopath, new ParallelOptions() { MaxDegreeOfParallelism = _service.MaxDegreeOfParallelism,CancellationToken=cancellationToken }, async (file, ct) =>
+        await Parallel.ForEachAsync(videopath, new ParallelOptions() { MaxDegreeOfParallelism = _milvusService.MaxDegreeOfParallelism,CancellationToken=cancellationToken }, async (file, ct) =>
         {
             try
             {
 
-                logger.LogInformation($"{file} start");
+                _logger.LogInformation($"{file} start");
                 await LoadVideo(file, ct);
-                logger.LogInformation($"{file} end");
+                _logger.LogInformation($"{file} end");
             }
             catch (Exception ex)
             {
-                logger.LogError(exception: ex, $"LogError: {file}");
+                _logger.LogError(exception: ex, $"LogError: {file}");
                 //return;
             }
         });
@@ -116,11 +124,11 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
     }
    public  async Task<IActionResult> SearchSimilarFrameAsync(string imagePath, CancellationToken cancellationToken,int limit = 5)
     {
-        logger.LogInformation("req");
+        _logger.LogInformation("req");
         Image<Rgb24> image;
         if (imagePath.StartsWith("http") || imagePath.StartsWith("https"))
         {
-            var sockslist = _service.Socks.Split(":");
+            var sockslist = _milvusService.Socks.Split(":");
             var proxy = new HttpToSocks5Proxy(sockslist[0],Convert.ToInt32( sockslist[1]));
             var handler = new HttpClientHandler
             {
@@ -150,10 +158,11 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
         var embeddingTensor =   Encode_image( tensor);
 
         float[] queryVector = [.. embeddingTensor[0].data<float>()];
- 
-        return Ok(JsonSerializer.Deserialize<JsonElement>(await PostJsonAsync<string>(_service.Query, new
+        var addressesFeature = _server.Features.Get<IServerAddressesFeature>();
+    
+        return Ok(JsonSerializer.Deserialize<JsonElement>(await PostJsonAsync<string>($"{addressesFeature.Addresses.FirstOrDefault()}/milvus/v2/vectordb/entities/search", new
         {
-            collectionName = _service.CollectionName,
+            collectionName = _milvusService.CollectionName,
             data = new float[][] { queryVector },
             annsField = "embedding",
             limit,
@@ -165,41 +174,6 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
             FilePath = item.GetProperty("file_path").GetString(),
             Timestamp = TimeSpan.FromSeconds(item.GetProperty("timestamp").GetSingle()).ToString(@"hh\:mm\:ss\.fff")
         }));
-        var filed = new Dictionary<string, MilvusDataType>()
-        {
-            ["file_path"] = MilvusDataType.String,
-            ["timestamp"] = MilvusDataType.Float
-        };
-        var parameters = new SearchParameters
-        {
-        };
-        foreach (var item in filed.Keys)
-        {
-            parameters.OutputFields.Add(item);
-        }
-        SearchResults searchResults = await _service.MilvusCollection.SearchAsync(
-              "embedding",
-            vectors: [new ReadOnlyMemory<float>(queryVector)],
-            metricType: SimilarityMetricType.L2,
-            limit,
-            parameters,cancellationToken:cancellationToken
-        );
-        var filePathField = searchResults.FieldsData
-    .First(f => f.FieldName == "file_path") as FieldData<string>;
-
-        var timestampField = searchResults.FieldsData
-            .First(f => f.FieldName == "timestamp") as FieldData<float>;
-
-      
-
-        return Ok(Enumerable.Range(0, searchResults.Scores.Count)
-            .Select(i => new
-            {
-                Id = searchResults.Ids.LongIds[i],
-                Score = searchResults.Scores[i],
-                FilePath = filePathField?.Data[i],
-                Timestamp = TimeSpan.FromSeconds(timestampField.Data[i]).ToString(@"hh\:mm\:ss\.fff") // timestampField?.Data[i]
-            })); 
     }
 
   
@@ -208,7 +182,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
     {
         using (no_grad())
         {
-            return _service.ScriptModule.invoke<Tensor>("encode_image", tensor).to(CPU).to(float32);
+            return _milvusService.ScriptModule.invoke<Tensor>("encode_image", tensor).to(CPU).to(float32);
         }
     }
     // 只负责把 tensor 的 embedding 写入 currentMeta
@@ -242,7 +216,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
             tmppath =$"\"{virtualDisk}\"";
         }
        var ffprobeparam = @$"-v error -show_entries format=duration -show_entries stream=codec_name,codec_type,width,height,r_frame_rate -of json {tmppath}";
-        var json = await RunCmdWithOutput(_service.  FFprobe, ffprobeparam, cancellationToken);
+        var json = await RunCmdWithOutput(_milvusService.  FFprobe, ffprobeparam, cancellationToken);
         using var jsonDoc = JsonDocument.Parse(json);
         var root = jsonDoc.RootElement;
         var stream = root.GetProperty("streams").EnumerateArray().FirstOrDefault(x => x.GetProperty("codec_type").GetString() == "video");
@@ -260,7 +234,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
         
         ffmpegparam = $"{ffmpegparam} -i {tmppath} -vf fps=1/{secondsPerFrame} -f rawvideo -pix_fmt rgb24 pipe:1";
 
-        var process = RunCmd(_service.FFmpeg, ffmpegparam);
+        var process = RunCmd(_milvusService.FFmpeg, ffmpegparam);
         var frameSize = width * height * 3; // bgr24
         int frameIndex = 0;
 
@@ -330,7 +304,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
                 timestamp.Add(meta.Timestamp);
             }
 
-           await _service.MilvusCollection.InsertAsync([
+           await _milvusService.MilvusCollection.InsertAsync([
                 FieldData.Create("path_sha256", sha256),
   FieldData.Create("file_path", file_path),
         FieldData.Create("timestamp", timestamp),
@@ -343,7 +317,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
 
     }
     void VideoProcess(string videopath, int frameIndex, int totalFrames) =>
-       logger.LogInformation($"Video {videopath}: processed {frameIndex}/{totalFrames} frames");
+       _logger.LogInformation($"Video {videopath}: processed {frameIndex}/{totalFrames} frames");
 
     static Tensor PreprocessBatchFrames(List<byte[]> buffers, int width, int height)
     {
@@ -424,7 +398,7 @@ public class VideoController(MilvusImageService service, ILogger<VideoController
         string error = await process.StandardError.ReadToEndAsync(token);
         if (!string.IsNullOrEmpty(error))
         {
-           logger.LogWarning("ffprobe stderr: " + error);
+           _logger.LogWarning("ffprobe stderr: " + error);
         }
         await process.WaitForExitAsync(token);
         return output;

@@ -6,13 +6,13 @@ builder.Services.AddControllers(options =>
 {
     options.SuppressAsyncSuffixInActionNames = false;
 });
-
+builder.Services.AddReverseProxy()
+    .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 builder.Services.AddSingleton<MilvusImageService>();
 builder.Services.AddHostedService<MilvusStartupService>();
 builder.WebHost.ConfigureKestrel(options =>
 {
-    var Kestrel = builder.Configuration.GetSection("Kestrel");
-    options.Configure(Kestrel);
+    options.Configure(builder.Configuration.GetSection("Kestrel"));
 });
  
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -31,5 +31,5 @@ if (app.Environment.IsDevelopment())
 app.UseAuthorization();
 
 app.MapControllers();
-
+app.MapReverseProxy();
 await app.RunAsync();

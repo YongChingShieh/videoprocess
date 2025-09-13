@@ -3,25 +3,22 @@ using Microsoft.Extensions.Logging;
 using System.Threading;
 using System.Threading.Tasks;
 
- 
-public class MilvusStartupService : IHostedService
- 
-{
-    private readonly ILogger<MilvusStartupService> _logger;
-    private readonly MilvusImageService _milvusService;
 
-    public MilvusStartupService(ILogger<MilvusStartupService> logger, MilvusImageService milvusService)
-    {
-        _logger = logger;
-        _milvusService = milvusService;
-    }
+public class MilvusStartupService(ILogger<MilvusStartupService> logger, MilvusImageService milvusService) : IHostedService
+{
+    private readonly ILogger<MilvusStartupService> _logger = logger;
+    private readonly MilvusImageService _milvusService = milvusService;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Application starting: loading model and Milvus collection...");
-        await _milvusService.EnsureCollectionLoadedAsync(cancellationToken);
-        _logger.LogInformation("Model and Milvus collection loaded.");
+        _logger.LogInformation("Starting MilvusStartupService...");
+        await _milvusService.InitAsync();
+        _logger.LogInformation("MilvusStartupService started.");
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Stopping MilvusStartupService...");
+        return Task.CompletedTask;
+    }
 }
