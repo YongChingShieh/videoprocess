@@ -12,7 +12,7 @@ public class MilvusStartupService(ILogger<MilvusStartupService> logger, MilvusIm
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting MilvusStartupService...");
-        await _milvusService.InitAsync();
+        await _milvusService.InitAsync(cancellationToken);
         _logger.LogInformation("MilvusStartupService started.");
     }
 
