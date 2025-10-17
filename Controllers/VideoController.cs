@@ -184,23 +184,39 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
     async Task GetSrtFile(string jsonpath, string srtpath, CancellationToken cancellationToken)
     {
         _logger.LogInformation($"json file {jsonpath} is begin");
-        var RootElement = JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(jsonpath,Encoding.UTF8, cancellationToken), JsonDocumentOptions).RootElement;
+        var RootElement = JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(jsonpath, Encoding.UTF8, cancellationToken), JsonDocumentOptions).RootElement;
         var segments = RootElement.GetProperty("segments").EnumerateArray();
-        var origin = segments
-    .Select(s => new
-    {
-        text = s.GetProperty("text").GetString().Trim(),
-        start = SecondsToSrtTime(s.GetProperty("start").GetDouble()),
-        end = SecondsToSrtTime(s.GetProperty("end").GetDouble())
-    })
-    .DistinctBy(x => x.text)
-    .Select((x, idx) => new
-    {
-        id = idx + 1, 
-        x.text,
-        time = $"{x.start} --> {x.end}"
-    })
-    .ToDictionary(k => k.id, v => (v.text, v.time));
+
+        // 解析原始数据并存储为元组列表 (text, start, end)
+        var items = segments
+            .Select(s => (
+                text: s.GetProperty("text").GetString().Trim(),
+                start: SecondsToSrtTime(s.GetProperty("start").GetDouble()),
+                end: SecondsToSrtTime(s.GetProperty("end").GetDouble())
+            ))
+            .ToList();
+
+        // 相邻去重：连续重复文本只保留第一条
+        var filteredItems = new List<(string text, string start, string end)>();
+        string lastText = null;
+        foreach (var item in items)
+        {
+            if (item.text != lastText)
+            {
+                filteredItems.Add(item);   // 文本不同时保留
+                lastText = item.text;      // 更新最后记录的文本
+            }
+        }
+
+        // 重新编号并转换为字典
+        var origin = filteredItems
+            .Select((x, idx) => new
+            {
+                id = idx + 1,
+                x.text,
+                time = $"{x.start} --> {x.end}"
+            })
+            .ToDictionary(k => k.id, v => (v.text, v.time));
         var fulltext = RootElement.GetProperty("text").GetString();
         var systemtoken = GetTokenCounts(_milvusService.SystemPrompt);
         var fulltexttoken = GetTokenCounts(fulltext);
@@ -749,6 +765,20 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
             }
             else
             {
+            if (System.IO.File.Exists(path))
+            {
+                string ext = Path.GetExtension(path).ToLowerInvariant();
+                if (ext == ".iso")
+                {
+                    list.Add($"{Bluray}{path}"); // 添加ISO文件路径
+                }
+                else
+                {
+                    list.Add(path); // 添加普通视频文件路径
+                }
+            }
+            else
+            {
                 var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories);
 
                 // 第一次遍历：识别所有蓝光根目录（包含BDMV文件夹的目录）
@@ -794,6 +824,8 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
                             list.Add(entry); // 添加普通视频文件路径
                     }
                 }
+            }
+               
             }
             return ComputeHash ? [.. await Task.WhenAll(list.Select(x => Sha256(x, virtualDisk, cancellationToken)))] : list.Select(x => ("", x, virtualDisk)).ToList();
         }
