@@ -27,6 +27,8 @@ namespace videoprocess.Controllers;
 
 public class VideoController(MilvusImageService milvusService, ILogger<VideoController> logger, IServer server) : ControllerBase
 {
+   // Tokenizer Token=
+   public Tokenizer Token { get; set; }
     private readonly MilvusImageService _milvusService = milvusService;
     private readonly ILogger<VideoController> _logger = logger;
     private readonly IServer _server = server;
@@ -41,7 +43,7 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = false
     };
-    Tokenizer Token => new(Path.Combine(_milvusService.OpenApi.Token, "tokenizer.json"));
+    //Tokenizer Token => new(Path.Combine(_milvusService.OpenApi.Token, "tokenizer.json"));
     static string Bluray => "bluray:";
     readonly Dictionary<string, string> dic = new()
     {
@@ -58,6 +60,7 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
     };
     public async Task<IActionResult> SubittleProcessAsync(List<Dictionary<string, string>> pathList, CancellationToken cancellationToken)
     {
+        Token??= new(Path.Combine(_milvusService.OpenApi.Token, "tokenizer.json"));
         var list = (await Task.WhenAll(pathList.Select(x => ProcessFolder(x["path"], x["virtualDisk"], cancellationToken, true, "")))).SelectMany(x => x);
         if (!list.Any())
         {
@@ -220,6 +223,9 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
         var fulltext = RootElement.GetProperty("text").GetString();
         var systemtoken = GetTokenCounts(_milvusService.SystemPrompt);
         var fulltexttoken = GetTokenCounts(fulltext);
+        _logger.LogInformation($"token end");
+        
+        //return;
         int tokenBudget = _milvusService.OpenApi.MaxTokens - (systemtoken + fulltexttoken);
         var batches = new List<string>();
         var batch = new List<KeyValuePair<int, (string text, string time)>>();
@@ -273,32 +279,40 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
             });
 
             logger.LogInformation($"send ai {usercontent}");
-            Stream response;
+            
             var success = false;
             while (!success)
             {
-                response = await SendAi(send, cancellationToken);// await PostJsonAsync<Stream>(_milvusService.OpenApi.Chat, send, cancellationToken);
-                if (response == null)
+                try
                 {
-                    logger.LogWarning($"response is null {jsonpath}");
-                    return;
+                    using var response = await PostJsonAsync<Stream>(_milvusService.OpenApi.Chat, sendmessage, cancellationToken);
+                    if (response == null)
+                    {
+                        logger.LogWarning($"response is null {jsonpath}");
+                        return;
+                    }
+                    using var doc = await JsonDocument.ParseAsync(response, JsonDocumentOptions, cancellationToken: cancellationToken);
+                    var content = doc.RootElement.GetProperty("choices").EnumerateArray().FirstOrDefault().GetProperty("message").GetProperty("content").GetString();
+                    System.Console.WriteLine($"result {content}");
+                    content = Regex.Replace(content, "<think>.*?</think>", "", RegexOptions.Singleline).Replace("```json", "").Replace("```", "");
+                    var airoot = JsonDocument.Parse(content, JsonDocumentOptions).RootElement.EnumerateArray().ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
+                    outputList.Add(string.Join(Environment.NewLine, origin.Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
+                    success = true;
+
                 }
-                using var doc = await JsonDocument.ParseAsync(response, JsonDocumentOptions, cancellationToken: cancellationToken);
-                var content = doc.RootElement.GetProperty("choices").EnumerateArray().FirstOrDefault().GetProperty("message").GetProperty("content").GetString();
-                System.Console.WriteLine($"result {content}");
-                content = Regex.Replace(content, "<think>.*?</think>", "", RegexOptions.Singleline).Replace("```json", "").Replace("```", "");
-                var bytes = Encoding.UTF8.GetBytes(content);
-                var reader = new Utf8JsonReader(bytes);
-                if (!JsonDocument.TryParseValue(ref reader, out var aiobj))
+                catch (OperationCanceledException) 
                 {
-                    response = await SendAi(send, cancellationToken);
+                    logger.LogInformation("请求已被取消");
+                    return; 
                 }
-                var airoot = aiobj.RootElement.EnumerateArray().ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
-                outputList.Add(string.Join(Environment.NewLine, origin.Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{(airoot.TryGetValue(x.Key, out var txt) ? txt : x.Value.text)}{Environment.NewLine}")));
-                success = true;
+                catch (Exception ex)
+                {
+                    System.Console.WriteLine(ex);
+                    success = false;
+                }
             }
-    
-           
+
+
 
         }
 
@@ -307,10 +321,7 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
             await System.IO.File.WriteAllLinesAsync(srtpath, outputList, Encoding.UTF8, cancellationToken);
         }
         _logger.LogInformation($" json file {jsonpath} is end");
-    }
-    async Task<Stream> SendAi(JsonNode content, CancellationToken cancellationToken) => await PostJsonAsync<Stream>(_milvusService.OpenApi.Chat, content, cancellationToken);
-
-
+    } 
     int GetTokenCounts(string content)
     {
 
