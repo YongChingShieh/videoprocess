@@ -224,47 +224,51 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
         var systemtoken = GetTokenCounts(_milvusService.SystemPrompt);
         var fulltexttoken = GetTokenCounts(fulltext);
         _logger.LogInformation($"token end");
-        
+
         //return;
         int tokenBudget = _milvusService.OpenApi.MaxTokens - (systemtoken + fulltexttoken);
         var batches = new List<string>();
+        var rawBatches = new List<List<KeyValuePair<int, (string text, string time)>>>();
         var batch = new List<KeyValuePair<int, (string text, string time)>>();
-        foreach (var kv in origin)
-        {
-            batch.Add(kv);
+          foreach (var kv in origin)
+          {
+              batch.Add(kv);
 
-            // 每次加一条后，尝试序列化
-            var json = JsonSerializer.Serialize(
-    batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
-            int sendtoken = GetTokenCounts(json);
-            if (sendtoken > tokenBudget)
-            {
-                // 回退掉最后一条
-                batch.RemoveAt(batch.Count - 1);
+              // 每次加一条后，尝试序列化
+              var json = JsonSerializer.Serialize(
+      batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
+              int sendtoken = GetTokenCounts(json);
+              if (sendtoken > tokenBudget)
+              {
+                  // 回退掉最后一条
+                  batch.RemoveAt(batch.Count - 1);
 
-                // 保存前一批
-                if (batch.Count > 0)
-                {
-                    var finalized = JsonSerializer.Serialize(
-                        batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
+                  // 保存前一批
+                  if (batch.Count > 0)
+                  {
+                      var finalized = JsonSerializer.Serialize(batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
                     batches.Add(finalized);
-                    batch.Clear();
-                }
+                    rawBatches.Add([.. batch]);
+                      batch.Clear();
+                  }
 
-                // 重新处理当前 kv（因为它自己可能能单独成一个 batch）
-                batch.Add(kv);
-            }
-        }
-        if (batch.Count > 0)
-        {
-            var finalized = JsonSerializer.Serialize(
-    batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
+                  // 重新处理当前 kv（因为它自己可能能单独成一个 batch）
+                  batch.Add(kv);
+              }
+          }
+          if (batch.Count > 0)
+          {
+             var finalized = JsonSerializer.Serialize(batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
             batches.Add(finalized);
+            rawBatches.Add([.. batch]);
         }
+
         var outputList = new List<string>();
-        foreach (var json in batches)
+ 
+        for (int i = 0; i < batches.Count; i++)
         {
-            var usercontent = $"翻译字幕 {json}";
+  
+            var usercontent = $"翻译字幕 {batches[i]}";
             var send = _milvusService.OpenApi.Request.DeepClone();
             var sendmessage = send["messages"].AsArray();
             sendmessage.Add(new JsonObject
@@ -279,7 +283,7 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
             });
 
             logger.LogInformation($"send ai {usercontent}");
-            
+
             var success = false;
             while (!success)
             {
@@ -291,19 +295,20 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
                         logger.LogWarning($"response is null {jsonpath}");
                         return;
                     }
+                    //batch[i]
                     using var doc = await JsonDocument.ParseAsync(response, JsonDocumentOptions, cancellationToken: cancellationToken);
                     var content = doc.RootElement.GetProperty("choices").EnumerateArray().FirstOrDefault().GetProperty("message").GetProperty("content").GetString();
                     System.Console.WriteLine($"result {content}");
                     content = Regex.Replace(content, "<think>.*?</think>", "", RegexOptions.Singleline).Replace("```json", "").Replace("```", "");
                     var airoot = JsonDocument.Parse(content, JsonDocumentOptions).RootElement.EnumerateArray().ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
-                    outputList.Add(string.Join(Environment.NewLine, origin.Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
+                     outputList.Add(string.Join(Environment.NewLine, rawBatches[i].Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
                     success = true;
 
                 }
-                catch (OperationCanceledException) 
+                catch (OperationCanceledException)
                 {
                     logger.LogInformation("请求已被取消");
-                    return; 
+                    return;
                 }
                 catch (Exception ex)
                 {
@@ -311,11 +316,9 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
                     success = false;
                 }
             }
-
-
-
         }
-
+     
+  
         if (outputList?.Count > 0)
         {
             await System.IO.File.WriteAllLinesAsync(srtpath, outputList, Encoding.UTF8, cancellationToken);
