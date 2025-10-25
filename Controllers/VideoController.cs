@@ -285,7 +285,7 @@ public class VideoController(MilvusImageService milvusService, ILogger<VideoCont
             {
                 try
                 {
-                    using var response = await PostJsonAsync<Stream>(_milvusService.OpenApi.Chat, sendmessage, cancellationToken);
+                    using var response = await PostJsonAsync<Stream>(_milvusService.OpenApi.Chat, send, cancellationToken);
                     if (response == null)
                     {
                         logger.LogWarning($"response is null {jsonpath}");
