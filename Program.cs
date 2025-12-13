@@ -6,10 +6,13 @@ builder.Services.AddControllers(options =>
 {
     options.SuppressAsyncSuffixInActionNames = false;
 });
-builder.Services.AddReverseProxy()
-    .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
-builder.Services.AddSingleton<MilvusImageService>();
-builder.Services.AddHostedService<MilvusStartupService>();
+ 
+builder.Services.AddSingleton<VideoProcessService>();
+
+ 
+builder.Services.AddHostedService(provider => provider.GetRequiredService<VideoProcessService>());
+
+
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Configure(builder.Configuration.GetSection("Kestrel"));
@@ -31,5 +34,5 @@ if (app.Environment.IsDevelopment())
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapReverseProxy();
+ 
 await app.RunAsync();
