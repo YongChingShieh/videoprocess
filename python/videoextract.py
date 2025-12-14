@@ -1517,7 +1517,7 @@ def search_similar():
 if __name__ == '__main__':
     # 自动初始化系统
     initialize_system()
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
          
  
     
