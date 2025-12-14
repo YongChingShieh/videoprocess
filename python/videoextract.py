@@ -1,5 +1,6 @@
  
 import os
+import sys
 from typing import List, Optional, Dict, Any, Callable, Union,Tuple
 import numpy as np
 import torch
@@ -14,7 +15,7 @@ import subprocess
 import json
 import hashlib
 from pathlib import Path
- 
+import yaml 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from datetime import datetime
@@ -39,13 +40,17 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+def load_config(config_path="config.yaml"):
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
+config = load_config()
 
 MILVUS_HOST = "localhost"
 MILVUS_PORT = "19530"
 COLLECTION_NAME = "video_segments"
 VECTOR_DIM = 768
- 
+width,height=224,224 
 class MilvusDB:
     def __init__(self, host: str = MILVUS_HOST, port: str = MILVUS_PORT, collection_name: str = COLLECTION_NAME, vector_dim: int = VECTOR_DIM):
                 # 控制重启的锁
@@ -483,7 +488,7 @@ class MilvusDB:
 def get_video_metadata_json(video_path: str) -> Dict[str, any]:
     """使用JSON格式获取视频元数据"""
     ffprobe_cmd = [
-        'ffprobe', '-v', 'quiet',
+        config['ffprobe']['path'], '-v', 'quiet',
         '-print_format', 'json',
         '-show_format',
         '-show_streams',
@@ -541,7 +546,7 @@ def get_video_metadata_json(video_path: str) -> Dict[str, any]:
         logger.error(f"获取视频元数据失败: {e}")
         return {'fps': 30.0, 'duration': 0, 'total_frames': 0, 'width': 1920, 'height': 1080}
 
-socks5='socks5://127.0.0.1:10080'
+ 
 def download_image_from_url(image_url: str) -> Image.Image:
     """
     从URL下载图片，支持代理
@@ -557,8 +562,8 @@ def download_image_from_url(image_url: str) -> Image.Image:
   
     try:
         response = requests.get(image_url, proxies={
-                'http': socks5,
-                'https': socks5
+                'http': config['proxy']['socks5'],
+                'https': config['proxy']['socks5']
             },verify=False, timeout=30)
         response.raise_for_status()
         
@@ -574,7 +579,7 @@ def download_image_from_url(image_url: str) -> Image.Image:
  
 def extract_image_features(image_path: str, model) -> torch.Tensor:
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((width,height)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], 
                            std=[0.229, 0.224, 0.225])
@@ -704,18 +709,20 @@ app = Flask(__name__)
 videoclip_xl = None
 #model_lock = threading.Lock() 
 db = MilvusDB()
-def load_model_once(weights_path="/mnt/c/Users/YongChing/Downloads/_models/VideoCLIP-XL/VideoCLIP-XL.bin"):
+def load_model_once():
     """一次性加载模型（全局单例）"""
     global videoclip_xl
     if videoclip_xl is not None:
         return videoclip_xl
-    
+    weights_path = config['model']['weights_path']
+    model_dir = os.path.dirname(weights_path)
+    sys.path.append(model_dir)
     from modeling import VideoCLIP_XL
   
     
     logger.info("正在加载模型...")
     videoclip_xl = VideoCLIP_XL()
-    state_dict = torch.load(weights_path, map_location="cpu")
+    state_dict = torch.load(weights_path, map_location="cuda:0")
     videoclip_xl.load_state_dict(state_dict)
     videoclip_xl.cuda().eval()
  
@@ -762,10 +769,10 @@ def improved_process_with_simple_ffmpeg(
         
         # 5. 构建优化的FFmpeg命令
         ffmpeg_cmd = [
-            'ffmpeg', 
+             config['ffmpeg']['path'], 
             '-hwaccel', 'cuda',
             '-i', video_path,
-            '-vf', f'select=between(mod(n\\,{interval_frames})\\,0\\,{frames_per_segment-1}),scale=224:224',
+            '-vf', f'select=between(mod(n\\,{interval_frames})\\,0\\,{frames_per_segment-1}),scale={width}:{height}',
             '-vsync', '0',
             '-f', 'rawvideo',
             '-pix_fmt', 'rgb24',
@@ -773,7 +780,7 @@ def improved_process_with_simple_ffmpeg(
             'pipe:1'
         ]
         
-        frame_size = 224 * 224 * 3
+        frame_size = width * height * 3
         all_data = []
         batch_tensors = []
         batch_metadata = []
@@ -794,7 +801,7 @@ def improved_process_with_simple_ffmpeg(
                     break
                 
                 # 转换为tensor
-                frame_np = np.frombuffer(frame_data, dtype=np.uint8).reshape(224, 224, 3).copy()
+                frame_np = np.frombuffer(frame_data, dtype=np.uint8).reshape(width,height, 3).copy()
                 tensor = torch.from_numpy(frame_np).to(f'cuda:{feature_extractor.gpu_id}')
                 tensor = tensor.float().div(255.0)
                 tensor = tensor.permute(2, 0, 1)  # HWC to CHW
@@ -891,7 +898,7 @@ def _process_batch_improved(
             
             results.append({
                 'frame_vector': feature.float().cpu().numpy().flatten().tolist(),
-                'video_path': video_path,
+                'video_path': video_info.get("path") ,
                 'start_time': float(start_time), 
                 'end_time': float(end_time),     
                 'segment_index': meta['segment_index'],
@@ -1230,7 +1237,7 @@ class VideoFeatureExtractor:
                 # 创建数据库记录
                 record = {
                     'frame_vector': feature.float().cpu().numpy().flatten().tolist(),
-                    'video_path': video_path,
+                    'video_path': video_info.get("path"),
                     'start_time': float(start_time_sec),
                     'end_time': float(end_time_sec),
                     'segment_index': segment_index,
@@ -1268,10 +1275,10 @@ class VideoFeatureExtractor:
         """预处理单帧"""
         frame_tensor = frame_tensor.cuda(device=self.gpu_id).float() / 255.0
         
-        if frame_tensor.shape[-2:] != (224, 224):
+        if frame_tensor.shape[-2:] != (width,height):
             frame_tensor = F.interpolate(
                 frame_tensor.unsqueeze(0),
-                size=(224, 224),
+                size=(width,height),
                 mode='bilinear',
                 align_corners=False
             ).squeeze(0)

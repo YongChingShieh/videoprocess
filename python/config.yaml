@@ -1,0 +1,17 @@
+# 模型配置
+model:
+  weights_path: "/mnt/c/Users/YongChing/Downloads/_models/VideoCLIP-XL/VideoCLIP-XL.bin"
+
+
+# 视频处理配置
+ffmpeg:
+  path: "ffmpeg"
+
+ffprobe:
+  path: "ffprobe"
+
+# 网络代理配置
+proxy:
+  socks5: "socks5://127.0.0.1:10080"
+
+
