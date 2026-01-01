@@ -14,6 +14,7 @@ using Tokenizers.DotNet;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 
 namespace videoprocess.Controllers;
 
@@ -154,6 +155,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             }
 
         }
+       
         if (jsonlist?.Count > 0)
         {
             await Parallel.ForEachAsync(jsonlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
@@ -330,20 +332,23 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         int millis = (int)((seconds - Math.Floor(seconds)) * 1000);
         return $"{hours:D2}:{minutes:D2}:{secs:D2},{millis:D3}";
     }
+    // 在类中添加 P/Invoke 声明
+    [DllImport("kernel32.dll")]
+    static extern uint SetErrorMode(uint uMode);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool SetProcessShutdownParameters(uint dwLevel, uint dwFlags);
+
+    const uint SEM_NOGPFAULTERRORBOX = 0x0002; // 阻止崩溃对话框
+    const uint SEM_FAILCRITICALERRORS = 0x0001; // 阻止磁盘错误对话框
+    const uint SHUTDOWN_NORETRY = 0x1; // 防止自动重启
     async Task GetJsonFile(string m3upath, CancellationToken cancellationToken)
     {
         _logger.LogInformation($"m3u file {m3upath} is begin");
 
         var model_dir = $"\"{_Service.FasterWhisper.model}\"";
-        var cmd = RunCmd(_Service.FasterWhisper.path, $" {m3upath} -l Japanese -m large-v2 --model_dir {model_dir}  --no_speech_threshold 0.3 --vad_method pyannote_v3 --vad_threshold 0.3 --standard  --output_dir source --output_format json --beep_off --skip");
-        await cmd.WaitForExitAsync(cancellationToken);
-        int exitCode = cmd.ExitCode;
-        _logger.LogInformation($"Process exited with code: {exitCode}");
-
-        if (exitCode != 0)
-        {
-            _logger.LogWarning($"Third-party program exited with error code: {exitCode}");
-        }
+        await RunCmdAsync(_Service.FasterWhisper.path, $" {m3upath} -l Japanese -m large-v2 --model_dir {model_dir}  --no_speech_threshold 0.3 --vad_method pyannote_v3 --vad_threshold 0.3 --standard  --output_dir source --output_format json --beep_off --skip", cancellationToken);
+       
         _logger.LogInformation($"m3u file {m3upath} is end");
     }
     async Task GetWavFileByVideo(string filepath, string savepath,string virtualDisk, CancellationToken cancellationToken )
@@ -357,56 +362,57 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         }
  
         savepath= $"\"{savepath}\"";
-        var cmd= RunCmd(_Service.FFmpeg, $"-y -i {tmppath}  -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le {savepath}");
-        await cmd.WaitForExitAsync(cancellationToken);
+        await RunCmdAsync(_Service.FFmpeg, $"-y -i {tmppath}  -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le {savepath}", cancellationToken);
+      
         _logger.LogInformation($"video file {filepath} is end");
     }
-
  
 
-
-     Process RunCmd(string FileName, string Arguments, bool useEventLog = true)
+  
+   
+ 
+    async Task  RunCmdAsync(string fileName, string arguments, CancellationToken token)
     {
-        _logger.LogInformation($"{FileName} {Arguments}");
-        var process = new Process
+        _logger.LogInformation($"{fileName} {arguments}");
+        uint originalMode = SetErrorMode(0);
+        // 2. 启用崩溃抑制 + 关键错误抑制
+        SetErrorMode(originalMode | SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+
+        // 3. 防止系统在崩溃后自动重启进程
+        SetProcessShutdownParameters(0x100 | SHUTDOWN_NORETRY, 0);
+        using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = FileName,
-                Arguments = Arguments,
+                FileName = fileName,
+                Arguments = arguments,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                RedirectStandardInput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                UseShellExecute = false
             },
             EnableRaisingEvents = true
         };
 
         process.Start();
-        process.ErrorDataReceived += (s, e) =>
-                  {
-                      if (!string.IsNullOrEmpty(e.Data) &&useEventLog)
-                          _logger.LogInformation($"LogError: {e.Data}");
-                  };
-        process.BeginErrorReadLine();
-        if (useEventLog)
-        {
-            // 事件式输出
-            process.OutputDataReceived += (s, e) =>
+
+        // 读取输出
+        var output =   process.StandardOutput.ReadToEndAsync(token);
+        var error =   process.StandardError.ReadToEndAsync(token);
+        /* var task=  await Task.WhenAll(output, error);
+           if (!string.IsNullOrEmpty(task[0]))
             {
-                if (!string.IsNullOrEmpty(e.Data))
-                    _logger.LogInformation($"Output: {e.Data}");
-            };
-          
-            process.BeginOutputReadLine();
-           
+                _logger.LogInformation($"output: {task[0]}");
+            }
+            if (!string.IsNullOrEmpty(task[1]))
+            {
+                _logger.LogInformation($"error: {task[1]}");
+            }*/
+        await Task.WhenAll(output, error, process.WaitForExitAsync(token));
+        SetErrorMode(originalMode);
 
-        }
-        
-        return process;
     }
-
+ 
         static    List<(string realpath, string virtualDisk)> ProcessFolder(string path, string virtualDisk)
         {
             var bdmv = "BDMV";
