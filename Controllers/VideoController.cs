@@ -41,7 +41,6 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = false
     };
-    //Tokenizer Token => new(Path.Combine(_Service.OpenApi.Token, "tokenizer.json"));
     static string Bluray => "bluray:";
   
    
@@ -262,11 +261,15 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             var usercontent = $"翻译字幕 {batches[i]}";
             var send = _Service.OpenApi.Request.DeepClone();
             var sendmessage = send["messages"].AsArray();
-            sendmessage.Add(new JsonObject
+            if(batches.Count>1)
             {
-                ["role"] = "user",
-                ["content"] = $"字幕的全文{Environment.NewLine}{fulltext}"
-            });
+                sendmessage.Add(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = $"字幕的全文{Environment.NewLine}{fulltext}"
+                });
+            }
+           
             sendmessage.Add(new JsonObject
             {
                 ["role"] = "user",
@@ -281,7 +284,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 try
                 {
                     logger.LogInformation($"send ai {usercontent}");
-                    using var response = await PostJsonAsync<Stream>(_Service.OpenApi.Chat, send, cancellationToken);
+                    using var response = await PostJsonAsync<Stream>(_Service.OpenApi.Chat, send,_Service.OpenApi.Headers, cancellationToken);
                     if (response == null)
                     {
                         logger.LogWarning($"response is null {jsonpath}");

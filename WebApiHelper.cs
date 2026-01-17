@@ -9,11 +9,18 @@ public static HttpClient HttpClient = new(new HttpClientHandler()
 })
 {
 
-    Timeout = Timeout.InfiniteTimeSpan,
-
+    Timeout = Timeout.InfiniteTimeSpan
 };
-public static async Task<T> PostJsonAsync<T>(string url, object payload, CancellationToken cancellationToken = default)
+public static async Task<T> PostJsonAsync<T>(string url, object payload,Dictionary<string,string> headers, CancellationToken cancellationToken = default)
 {
+    foreach(var header in headers)
+    {
+        if (HttpClient.DefaultRequestHeaders.Contains(header.Key))
+        {
+            HttpClient.DefaultRequestHeaders.Remove(header.Key);
+        }
+        HttpClient.DefaultRequestHeaders.Add(header.Key, header.Value);
+    }
     var response = await HttpClient.PostAsJsonAsync(url, payload, cancellationToken);
     if (!response.IsSuccessStatusCode)
     {

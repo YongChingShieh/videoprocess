@@ -17,7 +17,7 @@ public class VideoProcessService(IConfiguration configuration) : IHostedService
     private readonly IConfiguration _configuration = configuration;
 public string SystemPrompt { get; set; }
 
- public (string Token,string Chat,int MaxTokens, JsonNode Request) OpenApi { get; set; }
+ public (string Token,string Chat,int MaxTokens, JsonNode Request,Dictionary<string,string> Headers) OpenApi { get; set; }
     public (string path,string model) FasterWhisper  { get; set; }
   
     public string FFmpeg { get; private set; }
@@ -30,11 +30,6 @@ public string SystemPrompt { get; set; }
     {
         SystemPrompt = await File.ReadAllTextAsync(Path.Combine(Directory.GetCurrentDirectory(), "SystemPrompt.txt"), Encoding.UTF8, cancellationToken);
         FFmpeg = _configuration["AppConfiguration:FFmpeg"];
-
-
-
-
-
         var FasterWhisperConf = _configuration.GetSection("AppConfiguration:FasterWhisper");
         FasterWhisper = (FasterWhisperConf["Path"], FasterWhisperConf["ModeDir"]);
         var OpenApiConf = _configuration.GetSection("AppConfiguration:OpenApi");
@@ -49,7 +44,9 @@ public string SystemPrompt { get; set; }
             ["role"] = "system",
             ["content"] = SystemPrompt
         });
-        OpenApi = (OpenApiConf["Token"], OpenApiConf["Chat"], Convert.ToInt32(OpenApiConf["MaxTokens"]), request);
+        OpenApi = (OpenApiConf["Token"], OpenApiConf["Chat"], Convert.ToInt32(OpenApiConf["MaxTokens"]), request,
+            OpenApiConf.GetSection("Headers").GetChildren().ToDictionary(x => x.Key, x => x.Value)
+            );
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
