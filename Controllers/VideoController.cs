@@ -75,10 +75,10 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             var ass = "";
             if (FileExists(tmppath))
             {
-                wav = Path.ChangeExtension(realpath, wavfile);
-                json = Path.ChangeExtension(realpath, jsonfile);
-                srt = Path.ChangeExtension(realpath, srtfile);
-                ass = Path.ChangeExtension(realpath, assfile);
+                wav = Path.ChangeExtension(tmppath, wavfile);
+                json = Path.ChangeExtension(tmppath, jsonfile);
+                srt = Path.ChangeExtension(tmppath, srtfile);
+                ass = Path.ChangeExtension(tmppath, assfile);
             }
             else
             {
