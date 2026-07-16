@@ -10,7 +10,7 @@
 
    <PackageReference Include="Tokenizers.DotNet" Version="1.2.1" />
 
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+   
 
   </ItemGroup>
  <ItemGroup>
