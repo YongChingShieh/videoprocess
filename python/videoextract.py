@@ -664,7 +664,7 @@ def filter_existing_videos(videopath: List[Tuple], db: MilvusDB) -> List[Tuple]:
     field = "path_sha256"
     for item in videopath:
         try:
-            expr = f"{field} == '{item["sha256"]}'"
+            expr = f"{field} == '{item['sha256']}'"
             query_result = db.query_by_expression(
                 expression=expr, 
                 output_fields=[f"{field}"],
