@@ -1305,10 +1305,11 @@ def initialize_system():
 def export_to_jsonl():
     try:
         data = request.get_json()
+        expr = data.get("expr", "")
         batch_size=data.get("batch_size",1000)
         if batch_size>16384:
             batch_size=16384
-        db.export_to_jsonl(batch_size=batch_size)
+        db.export_to_jsonl(batch_size=batch_size, expr=expr)
         return jsonify("ok")
     except Exception as e:
 
