@@ -20,10 +20,16 @@ jobs:
         cache: 'pip'
 
     # 3. 安装 PyInstaller 及项目依赖
+# 3. 安装 PyInstaller 及项目依赖
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller
+        # 1. 预防/修复 pip 被意外丢失的问题
+        python -m ensurepip --default-pip
+        
+        # 2. 移除 --upgrade pip，直接安装依赖（避免 Windows 文件锁破坏 pip）
+        pip install "setuptools<70.0.0" pyinstaller
+        
+        # 3. 安装项目依赖
         if (Test-Path "python/requirements.txt") { pip install -r python/requirements.txt }
 
     # 4. 进入 python 目录并执行打包
