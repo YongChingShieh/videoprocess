@@ -19,23 +19,33 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
 
-    # 3. 安装 PyInstaller 及项目依赖
+    # 3. 设置 MSVC 编译器环境 (windows-latest 已内置 Visual Studio，需激活环境变量)
+    - name: Setup MSVC developer command prompt
+      uses: ilammy/msvc-dev-cmd@v1
+
+    # 4. 安装 Nuitka 及项目依赖
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller
+        pip install nuitka zstandard
         if (Test-Path "python/requirements.txt") { pip install -r python/requirements.txt }
 
-    # 4. 进入 python 目录并执行打包
-    - name: Build with PyInstaller
+    # 5. 进入 python 目录并执行 Nuitka 打包
+    - name: Build with Nuitka
       working-directory: python
       run: |
-        pyinstaller videoextract.spec
+        nuitka --standalone `
+               --onefile `
+               --assume-yes-for-downloads `
+               --include-data-files="config.yaml=config.yaml" `
+               --output-dir=dist `
+               --output-filename=videoextract.exe `
+               videoextract.py
 
-    # 5. 上传生成的文件夹（包含 exe 及其所有依赖 dll）
+    # 6. 上传生成的 EXE 文件
     - name: Upload Executable
       uses: actions/upload-artifact@v4
       with:
         name: videoextract-exe
-        # 修改为整个文件夹路径（PyInstaller 打包默认输出路径为 python/dist/videoextract）
-        path: python/dist/videoextract/
+        # --onefile 打包模式下，输出文件在 dist 目录下
+        path: python/dist/videoextract.exe
