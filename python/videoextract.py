@@ -1300,6 +1300,13 @@ def initialize_system():
         return True, "系统初始化成功"
     except Exception as e:
         return False, f"系统初始化失败: {str(e)}"
+@app.route('/api/initialize', methods=['POST']) 
+def initialize():
+    success, message = initialize_system()
+    if success:
+        return jsonify({"message": message}), 200
+    else:
+        return jsonify({"error": message}), 500
 
 @app.route('/api/features/exportjsonl', methods=['POST']) 
 def export_to_jsonl():
