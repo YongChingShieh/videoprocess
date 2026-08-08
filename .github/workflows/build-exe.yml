@@ -27,11 +27,12 @@ jobs:
         # 如果 python 目录下有 requirements.txt，可以安装它：
         if (Test-Path "python/requirements.txt") { pip install -r python/requirements.txt }
 
-    # 4. 进入 python 目录并执行打包
+# 4. 进入 python 目录并执行打包
     - name: Build with PyInstaller
       run: |
         cd python
-        pyinstaller --onefile --collect-all PyNvVideoCodec videoextract.py
+        $pynv_dir = python -c "import PyNvVideoCodec, os; print(os.path.dirname(PyNvVideoCodec.__file__))"
+        pyinstaller --onefile --add-data "$pynv_dir;PyNvVideoCodec" videoextract.py
 
     # 5. 上传生成的 exe 文件
     - name: Upload Executable
