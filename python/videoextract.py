@@ -1284,7 +1284,11 @@ class VideoFeatureExtractor:
             ).squeeze(0)
         
         return frame_tensor 
-
+iterator = db.collection.query_iterator(
+    expr="id >= 0", 
+    output_fields=["id"], 
+    batch_size=5000  # 结合你的数据量，可以把 batch_size 调大到 5000，速度更快
+)
 # 初始化函数
 def initialize_system():
     """初始化模型和数据库"""
@@ -1307,6 +1311,21 @@ def initialize():
         return jsonify({"message": message}), 200
     else:
         return jsonify({"error": message}), 500
+@app.route('/api/features/getmaxid', methods=['POST']) 
+def get_max_id():
+    try:
+        max_id = -1
+        while True:
+            res = iterator.next()
+            if not res:
+                break
+            # 在内存中找出当前 batch 的最大值并更新
+            current_max = max([hit['id'] for hit in res])
+            if current_max > max_id:
+                max_id = current_max
+        return jsonify({"max_id": max_id}), 200
+    except Exception as e:
+        return jsonify({"error": f"{str(e)}"}), 500
 
 @app.route('/api/features/exportjsonl', methods=['POST']) 
 def export_to_jsonl():
