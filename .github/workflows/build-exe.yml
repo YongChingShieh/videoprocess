@@ -31,8 +31,7 @@ jobs:
     - name: Build with PyInstaller
       run: |
         cd python
-        $pynv_dir = (python -c "import PyNvVideoCodec, os; print(os.path.dirname(PyNvVideoCodec.__file__))").Trim()
-        pyinstaller --onefile --add-data="${pynv_dir};PyNvVideoCodec" videoextract.py
+        pyinstaller videoextract.spec
 
     # 5. 上传生成的 exe 文件
     - name: Upload Executable
