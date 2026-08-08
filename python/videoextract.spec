@@ -1,10 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import importlib.util
+from PyInstaller.utils.hooks import collect_all
 
-# 1. 获取 PyNvVideoCodec 模块路径（避开 GPU 驱动检测）
+# 1. 一次性收集 setuptools、pkg_resources 和 pip 的依赖与静态资源
+pkg_res_datas, pkg_res_binaries, pkg_res_hiddenimports = collect_all('setuptools')
+pip_datas, pip_binaries, pip_hiddenimports = collect_all('pip')
+
+# 2. 获取 PyNvVideoCodec 模块路径
 spec_info = importlib.util.find_spec("PyNvVideoCodec")
-binaries = []
+binaries = list(pkg_res_binaries) + list(pip_binaries)
 
 if spec_info and spec_info.submodule_search_locations:
     pynv_dir = list(spec_info.submodule_search_locations)[0]
@@ -13,16 +18,20 @@ if spec_info and spec_info.submodule_search_locations:
             if f.endswith(".pyd") or f.endswith(".dll"):
                 binaries.append((os.path.join(pynv_dir, f), "PyNvVideoCodec"))
 
-# 2. 依赖分析
+# 3. 依赖分析
 a = Analysis(
     ['videoextract.py'],
     pathex=[],
     binaries=binaries,
-    datas=[],
+    datas=pkg_res_datas + pip_datas,
     hiddenimports=[
         'PyNvVideoCodec',
-        '_PyNvVideoCodec'
-    ],
+        '_PyNvVideoCodec',
+        'pkg_resources',
+        'pkg_resources.extern',
+        'setuptools',
+        'pip',                     # 明确强制加入 pip 模块
+    ] + pkg_res_hiddenimports + pip_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -30,10 +39,10 @@ a = Analysis(
     noarchive=False,
 )
 
-# 3. 打包 PYZ 资源
+# 4. 打包 PYZ 资源
 pyz = PYZ(a.pure)
 
-# 4. 生成 EXE 文件
+# 5. 生成 EXE 文件
 exe = EXE(
     pyz,
     a.scripts,
@@ -52,7 +61,7 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# 5. 收集依赖输出到目录 (onedir 模式)
+# 6. 收集依赖输出到目录 (onedir 模式)
 coll = COLLECT(
     exe,
     a.binaries,
