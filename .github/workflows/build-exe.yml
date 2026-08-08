@@ -31,7 +31,7 @@ jobs:
     - name: Build with PyInstaller
       run: |
         cd python
-        pyinstaller --onefile videoextract.py
+        pyinstaller --onefile --collect-all PyNvVideoCodec videoextract.py
 
     # 5. 上传生成的 exe 文件
     - name: Upload Executable
