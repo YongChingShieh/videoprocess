@@ -8,7 +8,12 @@ Pillow>=10.0.0
 PyNvVideoCodec
 pymilvus==2.6.3
 pyyaml>=6.0
-setuptools
+opencv-python
+ftfy
+regex
+timm
+decord
+einops
 # 协议缓冲区相关（已修正 protobuf 版本以匹配 pymilvus 2.6.3 的最低要求）
 protobuf>=5.27.2
 grpcio-tools>=1.56.0
