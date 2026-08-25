@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using static WebApiHelper;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Hosting.Server;
-using Tokenizers.DotNet;
+
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -26,7 +26,7 @@ namespace videoprocess.Controllers;
 public class VideoController(VideoProcessService VideoProcessService, ILogger<VideoController> logger ) : ControllerBase
 {
    
-    public Tokenizer Token { get; set; }
+ 
     private readonly VideoProcessService _Service = VideoProcessService;
     private readonly ILogger<VideoController> _logger = logger;
 
@@ -49,7 +49,6 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
     public async Task<IActionResult> SubittleProcessAsync(List<Dictionary<string, string>> pathList, CancellationToken cancellationToken)
     {
        
-        Token??= new(Path.Combine(_Service.OpenApi.Token, "tokenizer.json"));
         var list = pathList.Select(x => ProcessFolder(x["path"], x["virtualDisk"])).SelectMany(x => x);
         if (!list.Any())
         {
@@ -210,58 +209,29 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 time = $"{x.start} --> {x.end}"
             })
             .ToDictionary(k => k.id, v => (v.text, v.time));
+
         var fulltext = RootElement.GetProperty("text").GetString();
-        var systemtoken = GetTokenCounts(_Service.SystemPrompt);
-        var fulltexttoken = GetTokenCounts(fulltext);
-        _logger.LogInformation($"token end");
 
-        //return;
-        int tokenBudget = _Service.OpenApi.MaxTokens - (systemtoken + fulltexttoken);
-        var batches = new List<string>();
-        var rawBatches = new List<List<KeyValuePair<int, (string text, string time)>>>();
-        var batch = new List<KeyValuePair<int, (string text, string time)>>();
-          foreach (var kv in origin)
-          {
-              batch.Add(kv);
+     
+        var rawBatches = origin
+            .Chunk( _Service.OpenApi.Chunk)
+            .Select(chunk => chunk.ToList())
+            .ToList();
 
-              // 每次加一条后，尝试序列化
-              var json = JsonSerializer.Serialize(
-      batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
-              int sendtoken = GetTokenCounts(json);
-              if (sendtoken > tokenBudget)
-              {
-                  // 回退掉最后一条
-                  batch.RemoveAt(batch.Count - 1);
-
-                  // 保存前一批
-                  if (batch.Count > 0)
-                  {
-                      var finalized = JsonSerializer.Serialize(batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
-                    batches.Add(finalized);
-                    rawBatches.Add([.. batch]);
-                      batch.Clear();
-                  }
-
-                  // 重新处理当前 kv（因为它自己可能能单独成一个 batch）
-                  batch.Add(kv);
-              }
-          }
-          if (batch.Count > 0)
-          {
-             var finalized = JsonSerializer.Serialize(batch.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions);
-            batches.Add(finalized);
-            rawBatches.Add([.. batch]);
-        }
+        var batches = rawBatches
+            .Select(chunk => JsonSerializer.Serialize(
+                chunk.Select(x => new { id = x.Key, x.Value.text }), JsonSerializerOptions))
+            .ToList();
+   
 
         var outputList = new List<string>();
- 
         for (int i = 0; i < batches.Count; i++)
         {
-  
             var usercontent = $"翻译字幕 {batches[i]}";
             var send = _Service.OpenApi.Request.DeepClone();
             var sendmessage = send["messages"].AsArray();
-            if(batches.Count>1)
+
+            if (batches.Count > 1)
             {
                 sendmessage.Add(new JsonObject
                 {
@@ -269,14 +239,12 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                     ["content"] = $"字幕的全文{Environment.NewLine}{fulltext}"
                 });
             }
-           
+
             sendmessage.Add(new JsonObject
             {
                 ["role"] = "user",
                 ["content"] = usercontent
             });
-
-           
 
             var success = false;
             while (!success)
@@ -284,22 +252,51 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 try
                 {
                     logger.LogInformation($"send ai {usercontent}");
-                    using var response = await PostJsonAsync<Stream>(_Service.OpenApi.Chat, send,_Service.OpenApi.Headers, cancellationToken);
+                    using var response = await PostJsonAsync<Stream>(_Service.OpenApi.Chat, send, _Service.OpenApi.Headers, cancellationToken);
                     if (response == null)
                     {
                         logger.LogWarning($"response is null {jsonpath}");
                         return;
                     }
-                    //batch[i]
-                    using var doc = await JsonDocument.ParseAsync(response, JsonDocumentOptions, cancellationToken: cancellationToken);
-                    var content = doc.RootElement.GetProperty("choices").EnumerateArray().FirstOrDefault().GetProperty("message").GetProperty("content").GetString();
-                    System.Console.WriteLine($"result {content}");
-                    content = Regex.Replace(content, "<think>.*?</think>", "", RegexOptions.Singleline).Replace("```json", "").Replace("```", "");
-                   
-                    var airoot = JsonDocument.Parse(content, JsonDocumentOptions).RootElement.EnumerateArray().ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
-                     outputList.Add(string.Join(Environment.NewLine, rawBatches[i].Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
-                    success = true;
 
+                    using var doc = await JsonDocument.ParseAsync(response, JsonDocumentOptions, cancellationToken: cancellationToken);
+                    var firstChoice = doc.RootElement.GetProperty("choices").EnumerateArray().FirstOrDefault();
+                    var message = firstChoice.GetProperty("message");
+
+                    string content = string.Empty;
+
+                    // 1. 优先校验并提取 tool_calls (Function Calling)
+                    if (message.TryGetProperty("tool_calls", out var toolCalls) &&
+                        toolCalls.ValueKind == JsonValueKind.Array &&
+                        toolCalls.GetArrayLength() > 0)
+                    {
+                        var firstToolCall = toolCalls[0];
+                        if (firstToolCall.TryGetProperty("function", out var functionObj) &&
+                            functionObj.TryGetProperty("arguments", out var argumentsProp))
+                        {
+                            content = argumentsProp.GetString() ?? string.Empty;
+                        }
+                    }
+                    // 2. 如果没有 tool_calls，则回退读取普通的 content 文本
+                    else if (message.TryGetProperty("content", out var contentProp))
+                    {
+                        content = contentProp.GetString() ?? string.Empty;
+                        if (!string.IsNullOrEmpty(content))
+                        {
+                            content = Regex.Replace(content, "<think>.*?</think>", "", RegexOptions.Singleline)
+                                           .Replace("```json", "")
+                                           .Replace("```", "")
+                                           .Trim();
+                        }
+                    }
+
+                    System.Console.WriteLine($"result: {content}");
+
+                    var airoot = JsonDocument.Parse(content, JsonDocumentOptions).RootElement.EnumerateArray()
+                        .ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
+
+                    outputList.Add(string.Join(Environment.NewLine, rawBatches[i].Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
+                    success = true;
                 }
                 catch (OperationCanceledException)
                 {
@@ -313,20 +310,14 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 }
             }
         }
-     
-  
+
         if (outputList?.Count > 0)
         {
             await System.IO.File.WriteAllLinesAsync(srtpath, outputList, Encoding.UTF8, cancellationToken);
         }
         _logger.LogInformation($" json file {jsonpath} is end");
-    } 
-    int GetTokenCounts(string content)
-    {
-
-        var tokens = Token.Encode(content);
-        return tokens.Length;
     }
+ 
     static string SecondsToSrtTime(double seconds)
     {
         int hours = (int)(seconds / 3600);
