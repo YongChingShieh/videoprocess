@@ -11,25 +11,38 @@ public static HttpClient HttpClient = new(new HttpClientHandler()
 
     Timeout = Timeout.InfiniteTimeSpan
 };
-public static async Task<T> PostJsonAsync<T>(string url, object payload,Dictionary<string,string> headers, CancellationToken cancellationToken = default)
-{
-    foreach(var header in headers)
+    public static async Task<T> PostJsonAsync<T>(string url, object payload, Dictionary<string, string> headers, CancellationToken cancellationToken = default)
     {
-        if (HttpClient.DefaultRequestHeaders.Contains(header.Key))
+        // 1. 为本次请求创建独立的 HttpRequestMessage
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+        // 2. 设置请求体 (使用 JsonContent 代替 PostAsJsonAsync 以便绑定到 RequestMessage)
+        request.Content = JsonContent.Create(payload);
+
+        // 3. 将 Headers 添加到本次请求上，完全避开操作全局 DefaultRequestHeaders
+        if (headers != null)
         {
-            HttpClient.DefaultRequestHeaders.Remove(header.Key);
+            foreach (var header in headers)
+            {
+                // 防止由于配置意外读出 null 值导致崩溃
+                if (!string.IsNullOrEmpty(header.Key) && !string.IsNullOrEmpty(header.Value))
+                {
+                    request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+            }
         }
-        HttpClient.DefaultRequestHeaders.Add(header.Key, header.Value);
-    }
-    var response = await HttpClient.PostAsJsonAsync(url, payload, cancellationToken);
-    if (!response.IsSuccessStatusCode)
-    {
-        return (T)(object)response;
-    }
+
+        // 4. 发送请求
+        var response = await HttpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return (T)(object)response;
+        }
+
         if (typeof(T) == typeof(string))
         {
-
-            return (T)(object)await response.Content.ReadAsStringAsync(cancellationToken); ;
+            return (T)(object)await response.Content.ReadAsStringAsync(cancellationToken);
         }
         else if (typeof(T) == typeof(Stream))
         {
@@ -39,8 +52,7 @@ public static async Task<T> PostJsonAsync<T>(string url, object payload,Dictiona
         {
             return (T)(object)await response.Content.ReadAsByteArrayAsync(cancellationToken);
         }
-   
-    return (T)(object)response;
 
-}
+        return (T)(object)response;
+    }
 }
