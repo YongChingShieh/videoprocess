@@ -227,20 +227,18 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         var outputList = new List<string>();
         for (int i = 0; i < batches.Count; i++)
         {
-            var usercontent = $"翻译字幕 {batches[i]}";
+            var usercontent = $"{batches[i]}";
             var send = _Service.OpenApi.Request.DeepClone();
-            var sendmessage = send["messages"].AsArray();
-
             if (batches.Count > 1)
             {
-                sendmessage.Add(new JsonObject
+                send["messages"].AsArray().Add(new JsonObject
                 {
                     ["role"] = "user",
                     ["content"] = $"字幕的全文{Environment.NewLine}{fulltext}"
                 });
             }
 
-            sendmessage.Add(new JsonObject
+            send["messages"].AsArray().Add(new JsonObject
             {
                 ["role"] = "user",
                 ["content"] = usercontent

@@ -15,7 +15,7 @@ public class VideoProcessService(IConfiguration configuration) : IHostedService
 {
    
     private readonly IConfiguration _configuration = configuration;
-public string SystemPrompt { get; set; }
+ 
 
  public (string Chat,int Chunk, Dictionary<string, string> Headers, JsonNode Request) OpenApi { get; set; }
     public (string path,string model) FasterWhisper  { get; set; }
@@ -28,21 +28,17 @@ public string SystemPrompt { get; set; }
  
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        SystemPrompt = await File.ReadAllTextAsync(Path.Combine(Directory.GetCurrentDirectory(), "SystemPrompt.txt"), Encoding.UTF8, cancellationToken);
         FFmpeg = _configuration["AppConfiguration:FFmpeg"];
         var FasterWhisperConf = _configuration.GetSection("AppConfiguration:FasterWhisper");
         FasterWhisper = (FasterWhisperConf["Path"], FasterWhisperConf["ModeDir"]);
         var OpenApiConf = _configuration.GetSection("AppConfiguration:OpenApi");
 
 
-        var request = JsonNode.Parse(OpenApiConf.GetSection("Request").Value);
-
-        var messages = request["messages"].AsArray();
-        messages.Clear();
-        messages.Add(new JsonObject
+        var request =  JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(Directory.GetCurrentDirectory(), "appsettings.json"), Encoding.UTF8, cancellationToken))["AppConfiguration"]["OpenApi"]["Request"];
+        request["messages"].AsArray().Add(new JsonObject
         {
             ["role"] = "system",
-            ["content"] = SystemPrompt
+            ["content"] = await File.ReadAllTextAsync(Path.Combine(Directory.GetCurrentDirectory(), "SystemPrompt.txt"), Encoding.UTF8, cancellationToken)
         });
         OpenApi = ( OpenApiConf["Chat"], Convert.ToInt32(OpenApiConf["Chunk"]),
             OpenApiConf.GetSection("Headers").GetChildren().ToDictionary(x => x.Key, x => x.Value),
