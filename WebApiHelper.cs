@@ -37,7 +37,7 @@ public static HttpClient HttpClient = new(new HttpClientHandler()
 
         if (!response.IsSuccessStatusCode)
         {
-            return (T)(object)response;
+            throw new HttpRequestException($"HTTP 请求失败 [{response.StatusCode}]: {await response.Content.ReadAsStringAsync(cancellationToken)}");
         }
 
         if (typeof(T) == typeof(string))
