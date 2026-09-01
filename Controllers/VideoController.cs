@@ -408,18 +408,18 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         static    List<(string realpath, string virtualDisk)> ProcessFolder(string path, string virtualDisk)
         {
             var bdmv = "BDMV";
-           
+           var iso= ".iso";
             var list = new List<string>();
-            if (!string.IsNullOrEmpty(virtualDisk))
+            if (!string.IsNullOrEmpty(virtualDisk)&& FileExists(path)&& Path.GetExtension(path).Equals(iso, StringComparison.InvariantCultureIgnoreCase))
             {
                 list.Add($"{Bluray}{path}");
             }
             else
             {
-            if (System.IO.File.Exists(path))
+            if (FileExists(path))
             {
                 string ext = Path.GetExtension(path).ToLowerInvariant();
-                if (ext == ".iso")
+                if (ext == iso)
                 {
                     list.Add($"{Bluray}{path}"); // 添加ISO文件路径
                 }
@@ -454,7 +454,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 // 第二次遍历：处理文件
                 foreach (var entry in pathlist)
                 {
-                    if (System.IO.File.Exists(entry)) // 只处理文件
+                    if (FileExists(entry)) // 只处理文件
                     {
                         string ext = Path.GetExtension(entry).ToLowerInvariant();
                       
@@ -467,7 +467,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                             continue; // 跳过蓝光根目录内的所有文件
 
                         // 处理ISO文件或普通视频文件
-                        if (ext == ".iso")
+                        if (ext == iso)
                             list.Add($"{Bluray}{entry}"); // 添加ISO文件路径
                         else
                             list.Add(entry); // 添加普通视频文件路径
