@@ -210,9 +210,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             })
             .ToDictionary(k => k.id, v => (v.text, v.time));
 
-        var fulltext = RootElement.GetProperty("text").GetString();
-
-     
+          var fulltext = string.Join("", origin.Values.Select(v => v.text));
         var rawBatches = origin
             .Chunk( _Service.OpenApi.Chunk)
             .Select(chunk => chunk.ToList())
