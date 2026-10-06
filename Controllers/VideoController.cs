@@ -336,23 +336,24 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
     {
         _logger.LogInformation($"m3u file {m3upath} is begin");
 
-        var model_dir = $"\"{_Service.FasterWhisper.model}\"";
-        await RunCmdAsync(_Service.FasterWhisper.path, $" {m3upath} -l Japanese -m large-v2 --model_dir {model_dir}  --no_speech_threshold 0.3 --vad_method pyannote_v3 --vad_threshold 0.3 --standard  --output_dir source --output_format json --beep_off --skip", cancellationToken);
+        //var model_dir = $"\"{_Service.FasterWhisper.model}\"";
+        await RunCmdAsync(_Service.FasterWhisper.path, [m3upath, "-l", "Japanese", "-m", "large-v2", "--model_dir", _Service.FasterWhisper.model, "--no_speech_threshold", "0.3", "--vad_method", "pyannote_v3", "--vad_threshold", "0.3", "--standard", "--output_dir", "source", "--output_format", "json", "--beep_off", "--skip"], cancellationToken);
        
         _logger.LogInformation($"m3u file {m3upath} is end");
     }
     async Task GetWavFileByVideo(string filepath, string savepath,string virtualDisk, CancellationToken cancellationToken )
     {
         _logger.LogInformation($"video file {filepath} is begin");
-        var tmppath = $"\"{filepath}\"";
+        //var tmppath = $"\"{filepath}\"";
         if (!string.IsNullOrEmpty(virtualDisk))
         {
-            var tmpvirtualDisk = $"{Bluray}{virtualDisk}";
-            tmppath = $"\"{tmpvirtualDisk}\"";
+            filepath = $"{Bluray}{filepath}";
+            //var tmpvirtualDisk = $"{Bluray}{virtualDisk}";
+            //tmppath = $"\"{tmpvirtualDisk}\"";
         }
  
-        savepath= $"\"{savepath}\"";
-        await RunCmdAsync(_Service.FFmpeg, $"-y -i {tmppath}  -map 0:a:0 -ac 1 -ar 16000 -c:a pcm_s16le {savepath}", cancellationToken);
+        //savepath= $"\"{savepath}\"";
+        await RunCmdAsync(_Service.FFmpeg, ["-y", "-i", filepath, "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", savepath], cancellationToken);
       
         _logger.LogInformation($"video file {filepath} is end");
     }
@@ -361,9 +362,9 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
   
    
  
-    async Task  RunCmdAsync(string fileName, string arguments, CancellationToken token)
+    async Task  RunCmdAsync(string fileName, List<string> ArgumentList, CancellationToken token)
     {
-        _logger.LogInformation($"{fileName} {arguments}");
+        _logger.LogInformation($"{fileName} {string.Join(" ", ArgumentList)}");
         uint originalMode = SetErrorMode(0);
         // 2. 启用崩溃抑制 + 关键错误抑制
         SetErrorMode(originalMode | SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
@@ -375,15 +376,17 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             StartInfo = new ProcessStartInfo
             {
                 FileName = fileName,
-                Arguments = arguments,
+                 
+                //ArgumentList= ArgumentList,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
                 UseShellExecute = false
             },
+            
             EnableRaisingEvents = true
         };
-
+        ArgumentList.ForEach(process.StartInfo.ArgumentList.Add);
         process.Start();
 
         // 读取输出
