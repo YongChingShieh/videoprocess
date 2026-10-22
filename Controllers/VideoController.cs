@@ -42,15 +42,14 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         WriteIndented = false
     };
     static string Bluray => "bluray:";
-  
-   
-  
-  
+
+
+
     public async Task<IActionResult> SubittleProcessAsync(List<Dictionary<string, string>> pathList, CancellationToken cancellationToken)
     {
        
-        var list = pathList.Select(x => ProcessFolder(x["path"], x["virtualDisk"])).SelectMany(x => x);
-        if (!list.Any())
+        var list = pathList.Select(x => ProcessFolder(x["path"], x["virtualDisk"])).SelectMany(x => x).ToList();
+        if (list.Count == 0)
         {
             return Ok("not found any video file, skipping...");
         }
@@ -112,9 +111,9 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 m3u.Add(x.savepath);
             }
             return !wavexists;
-        });
+        }).ToList();
         var jsonlist = dic.Where(x => x.TryGetValue(jsonfile, out var list) && list.Count > 0).Select(x => x[jsonfile]).SelectMany(x => x).DistinctBy(x => x.savepath).Where(x => !FileExists(x.savepath)).ToList();
-        if (wavlist?.Count() > 0)
+        if (wavlist?.Count > 0)
         {
             await Parallel.ForEachAsync(wavlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
             {
@@ -144,8 +143,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                     savepath: Path.ChangeExtension(x, srtfile),
                     virtualDisk: ""
                 ))
-                .Where(x => !jsonlist.Any(item => item.savepath == x.savepath)) // 去重
-                .ToList();
+                .Where(x => !jsonlist.Any(item => item.savepath == x.savepath)).ToList();
 
             if (newjson.Count != 0)
             {
@@ -153,7 +151,6 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             }
 
         }
-       
         if (jsonlist?.Count > 0)
         {
             await Parallel.ForEachAsync(jsonlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
@@ -176,7 +173,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
     async Task GetSrtFile(string jsonpath, string srtpath, CancellationToken cancellationToken)
     {
         _logger.LogInformation($"json file {jsonpath} is begin");
-        var RootElement = JsonDocument.Parse(await System.IO.File.ReadAllTextAsync(jsonpath, Encoding.UTF8, cancellationToken), JsonDocumentOptions).RootElement;
+        var RootElement = JsonElement.Parse(await System.IO.File.ReadAllTextAsync(jsonpath, Encoding.UTF8, cancellationToken), JsonDocumentOptions);
         var segments = RootElement.GetProperty("segments").EnumerateArray();
 
         // 解析原始数据并存储为元组列表 (text, start, end)
@@ -288,7 +285,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
 
                     System.Console.WriteLine($"result: {content}");
 
-                    var airoot = JsonDocument.Parse(content, JsonDocumentOptions).RootElement.EnumerateArray()
+                    var airoot = JsonElement.Parse(content, JsonDocumentOptions).EnumerateArray()
                         .ToDictionary(key => key.GetProperty("id").GetInt32(), value => value.GetProperty("text").GetString().Trim());
 
                     outputList.Add(string.Join(Environment.NewLine, rawBatches[i].Select((x, index) => $"{index + 1}{Environment.NewLine}{x.Value.time}{Environment.NewLine}{airoot[x.Key]}{Environment.NewLine}")));
@@ -322,13 +319,15 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         int millis = (int)((seconds - Math.Floor(seconds)) * 1000);
         return $"{hours:D2}:{minutes:D2}:{secs:D2},{millis:D3}";
     }
-    // 在类中添加 P/Invoke 声明
-    [DllImport("kernel32.dll")]
+
+
+
+
+    [DllImport(Kernel32)]
     static extern uint SetErrorMode(uint uMode);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport(Kernel32, SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool SetProcessShutdownParameters(uint dwLevel, uint dwFlags);
-
     const uint SEM_NOGPFAULTERRORBOX = 0x0002; // 阻止崩溃对话框
     const uint SEM_FAILCRITICALERRORS = 0x0001; // 阻止磁盘错误对话框
     const uint SHUTDOWN_NORETRY = 0x1; // 防止自动重启
@@ -357,52 +356,22 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
       
         _logger.LogInformation($"video file {filepath} is end");
     }
- 
 
-  
-   
- 
+
+
+    const string Kernel32 = "kernel32.dll";
+
     async Task  RunCmdAsync(string fileName, List<string> ArgumentList, CancellationToken token)
     {
         _logger.LogInformation($"{fileName} {string.Join(" ", ArgumentList)}");
         uint originalMode = SetErrorMode(0);
         // 2. 启用崩溃抑制 + 关键错误抑制
-        SetErrorMode(originalMode | SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+        _ = SetErrorMode(originalMode | SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
 
         // 3. 防止系统在崩溃后自动重启进程
         SetProcessShutdownParameters(0x100 | SHUTDOWN_NORETRY, 0);
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                 
-                //ArgumentList= ArgumentList,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                UseShellExecute = false
-            },
-            
-            EnableRaisingEvents = true
-        };
-        ArgumentList.ForEach(process.StartInfo.ArgumentList.Add);
-        process.Start();
-
-        // 读取输出
-        var output =   process.StandardOutput.ReadToEndAsync(token);
-        var error =   process.StandardError.ReadToEndAsync(token);
-        /* var task=  await Task.WhenAll(output, error);
-           if (!string.IsNullOrEmpty(task[0]))
-            {
-                _logger.LogInformation($"output: {task[0]}");
-            }
-            if (!string.IsNullOrEmpty(task[1]))
-            {
-                _logger.LogInformation($"error: {task[1]}");
-            }*/
-        await Task.WhenAll(output, error, process.WaitForExitAsync(token));
-        SetErrorMode(originalMode);
+        await Process.RunAndCaptureTextAsync(fileName, ArgumentList, token);
+        _ = SetErrorMode(originalMode);
 
     }
  
@@ -495,5 +464,6 @@ public class WebApiExceptionFilter : IAsyncExceptionFilter
         return Task.CompletedTask;
     }
 }
+ 
 
 
