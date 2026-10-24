@@ -370,7 +370,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
 
         // 3. 防止系统在崩溃后自动重启进程
         SetProcessShutdownParameters(0x100 | SHUTDOWN_NORETRY, 0);
-        await Process.RunAndCaptureTextAsync(fileName, ArgumentList, token);
+        await Process.RunAsync(fileName, ArgumentList,true, token);
         _ = SetErrorMode(originalMode);
 
     }
