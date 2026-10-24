@@ -400,7 +400,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             }
             else
             {
-                var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories);
+                var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories).ToList();
 
                 // 第一次遍历：识别所有蓝光根目录（包含BDMV文件夹的目录）
                 var blurayRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
