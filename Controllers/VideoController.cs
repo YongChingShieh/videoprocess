@@ -59,60 +59,46 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         {
             System.IO.File.Delete(m3upath);
         }
-        var wavfile = "wav";
-        var jsonfile = "json";
-        var srtfile = "srt";
-        var assfile = "ass";
-        var dic = new List<Dictionary<string, List<(string filepath, string savepath,string virtualDisk)>>>();
-        foreach (var ( realpath, virtualDisk) in list)
+        var wavfile = ".wav";
+        var jsonfile = ".json";
+        var srtfile = ".srt";
+        var assfile = ".ass";
+        var wavlist = new List<(string inputpath, string savepath, string bluraypath)>();
+        var addjosn = new List<(string savepath, string srtpath)>();
+        var finallyjson= new List<(string savepath, string srtpath)>();
+        foreach (var (path, bluraypath, isfile) in list)
         {
-            var tmppath = realpath.Replace(Bluray, "");
-            var wav = "";
-            var json = "";
-            var srt = "";
-            var ass = "";
-            if (FileExists(tmppath))
+            var wav = Path.ChangeExtension(path, wavfile);
+            var json = Path.ChangeExtension(path, jsonfile);
+            var srt = Path.ChangeExtension(path, srtfile);
+            var ass = Path.ChangeExtension(path, assfile);
+            if (!isfile)
             {
-                wav = Path.ChangeExtension(tmppath, wavfile);
-                json = Path.ChangeExtension(tmppath, jsonfile);
-                srt = Path.ChangeExtension(tmppath, srtfile);
-                ass = Path.ChangeExtension(tmppath, assfile);
-            }
-            else
-            {
-              
-                var filename = Path.GetFileName(tmppath);
-                wav = Path.Combine(tmppath, $"{filename}.{wavfile}"  );
-                json = Path.Combine(tmppath, $"{filename}.{jsonfile}");
-                srt = Path.Combine(tmppath, $"{filename}.{srtfile}");
-                ass = Path.Combine(tmppath, $"{filename}.{assfile}");
+                var filename = Path.GetFileName(path);
+                wav = Path.Combine(path, $"{filename}{wavfile}");
+                json = Path.Combine(path, $"{filename}{jsonfile}");
+                srt = Path.Combine(path, $"{filename}{srtfile}");
+                ass = Path.Combine(path, $"{filename}{assfile}");
             }
             if (FileExists(srt) || FileExists(ass))
             {
                 continue;
             }
-            dic.Add(new Dictionary<string, List<(string filepath, string savepath,string virtualDisk)>>
+            if (FileExists(json))
             {
-                [wavfile] =
-    [
-        (realpath, wav,virtualDisk)
-    ],
-                [jsonfile] =
-    [
-        (json,srt,"" )
-    ]
-            });
-        }
-        var wavlist = dic.Where(x => x.TryGetValue(wavfile, out var list) && list.Count > 0).Select(x => x[wavfile]).SelectMany(x => x).DistinctBy(x => x.savepath).Where(x =>
-        {
-            var wavexists = FileExists(x.savepath);
-            if (wavexists &&  !FileExists(Path.ChangeExtension(x.savepath,jsonfile)))
-            {
-                m3u.Add(x.savepath);
+                finallyjson.Add((json, srt));
+                continue;
             }
-            return !wavexists;
-        }).ToList();
-        var jsonlist = dic.Where(x => x.TryGetValue(jsonfile, out var list) && list.Count > 0).Select(x => x[jsonfile]).SelectMany(x => x).DistinctBy(x => x.savepath).Where(x => !FileExists(x.savepath)).ToList();
+
+            if (FileExists(wav))
+            {
+                m3u.Add(wav);
+            }
+            else
+            {
+                wavlist.Add((path, wav, bluraypath));
+            }
+        }
         if (wavlist?.Count > 0)
         {
             await Parallel.ForEachAsync(wavlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
@@ -120,7 +106,7 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 try
                 {
                   
-                    await GetWavFileByVideo(x.filepath, x.savepath, x.virtualDisk, _);
+                    await GetWavFileByVideo(x.inputpath, x.savepath, x.bluraypath, _);
                     m3u.Add(x.savepath);
                 }
                 catch (System.Exception ex)
@@ -135,29 +121,22 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
 
             await System.IO.File.WriteAllLinesAsync(m3upath, m3u, cancellationToken);
             await GetJsonFile(m3upath, cancellationToken);
-            // 修正后的新增任务逻辑
-            var newjson = m3u
-                .Where(x => FileExists(Path.ChangeExtension(x, jsonfile)))
-                .Select(x => (
-                    filepath: Path.ChangeExtension(x, jsonfile),
-                    savepath: Path.ChangeExtension(x, srtfile),
-                    virtualDisk: ""
-                ))
-                .Where(x => !jsonlist.Any(item => item.savepath == x.savepath)).ToList();
-
-            if (newjson.Count != 0)
-            {
-                jsonlist.AddRange(newjson);
-            }
+            addjosn.AddRange(m3u
+                  .Where(x => FileExists(Path.ChangeExtension(x, jsonfile)))
+                  .Select(x => (
+                        Path.ChangeExtension(x, jsonfile),
+                        Path.ChangeExtension(x, srtfile)
+                      
+                  )));
 
         }
-        if (jsonlist?.Count > 0)
+        if (addjosn.Count > 0||finallyjson.Count>0)
         {
-            await Parallel.ForEachAsync(jsonlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
+            await Parallel.ForEachAsync([..addjosn,..finallyjson], new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
            {
                try
                {
-                   await GetSrtFile(x.filepath, x.savepath, _);
+                await GetSrtFile(x.savepath, x.srtpath, _);
 
                }
                catch (Exception ex)
@@ -340,21 +319,21 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
        
         _logger.LogInformation($"m3u file {m3upath} is end");
     }
-    async Task GetWavFileByVideo(string filepath, string savepath,string virtualDisk, CancellationToken cancellationToken )
+    async Task GetWavFileByVideo(string inputpath, string savepath,string bluraypath, CancellationToken cancellationToken )
     {
-        _logger.LogInformation($"video file {filepath} is begin");
+        _logger.LogInformation($"video file {inputpath} is begin");
         //var tmppath = $"\"{filepath}\"";
-        if (!string.IsNullOrEmpty(virtualDisk))
+        if (!string.IsNullOrEmpty(bluraypath))
         {
-            filepath = $"{Bluray}{filepath}";
+            inputpath = bluraypath;
             //var tmpvirtualDisk = $"{Bluray}{virtualDisk}";
             //tmppath = $"\"{tmpvirtualDisk}\"";
         }
  
         //savepath= $"\"{savepath}\"";
-        await RunCmdAsync(_Service.FFmpeg, ["-y", "-i", filepath, "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", savepath], cancellationToken);
+        await RunCmdAsync(_Service.FFmpeg, ["-y", "-i", inputpath, "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", savepath], cancellationToken);
       
-        _logger.LogInformation($"video file {filepath} is end");
+        _logger.LogInformation($"video file {inputpath} is end");
     }
 
 
@@ -375,79 +354,46 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
 
     }
  
-        static    List<(string realpath, string virtualDisk)> ProcessFolder(string path, string virtualDisk)
+        static    List<(string path, string bluraypath,bool isfile)> ProcessFolder(string path, string virtualDisk)
         {
             var bdmv = "BDMV";
            var iso= ".iso";
-            var list = new List<string>();
-            if (!string.IsNullOrEmpty(virtualDisk)&& FileExists(path)&& Path.GetExtension(path).Equals(iso, StringComparison.InvariantCultureIgnoreCase))
+            var list = new List<(string path, string bluraypath,bool isfile)>();
+         if (FileExists(path))
+        {
+            var exten= Path.GetExtension(path);
+            var isiso= exten.Equals(iso, StringComparison.InvariantCultureIgnoreCase);
+            var isvirtualDisk= !string.IsNullOrEmpty(virtualDisk);
+            if (!isiso && !isvirtualDisk)
             {
-                list.Add($"{Bluray}{path}");
+                return[(path,"",true)];
             }
-            else
+            if (isiso && !isvirtualDisk)
             {
-            if (FileExists(path))
+                return [(path,$"{Bluray}{path}",true)];
+            }
+            if (isiso && isvirtualDisk)
             {
-                string ext = Path.GetExtension(path).ToLowerInvariant();
-                if (ext == iso)
-                {
-                    list.Add($"{Bluray}{path}"); // 添加ISO文件路径
-                }
-                else
-                {
-                    list.Add(path); // 添加普通视频文件路径
-                }
+                return [(path, $"{Bluray}{virtualDisk}",true)];
             }
-            else
-            {
-                var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories).ToList();
-
-                // 第一次遍历：识别所有蓝光根目录（包含BDMV文件夹的目录）
-                var blurayRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var entry in pathlist)
-                {
-                    if (Directory.Exists(entry))
-                    {
-                        string dirName = Path.GetFileName(entry);
-                        if (dirName.Equals(bdmv, StringComparison.OrdinalIgnoreCase))
-                        {
-                            string parentDir = Directory.GetParent(entry)?.FullName;
-                            if (parentDir != null && !blurayRoots.Contains(parentDir))
-                            {
-                                blurayRoots.Add(parentDir);
-                                list.Add($"{Bluray}{parentDir}"); // 添加蓝光根目录
-                            }
-                        }
-                    }
-                }
-
-                // 第二次遍历：处理文件
-                foreach (var entry in pathlist)
-                {
-                    if (FileExists(entry)) // 只处理文件
-                    {
-                        string ext = Path.GetExtension(entry).ToLowerInvariant();
-                      
-
-                        // 检查文件是否在蓝光根目录下
-                        bool isUnderBluray = blurayRoots.Any(root =>
-                            entry.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
-
-                        if (isUnderBluray)
-                            continue; // 跳过蓝光根目录内的所有文件
-
-                        // 处理ISO文件或普通视频文件
-                        if (ext == iso)
-                            list.Add($"{Bluray}{entry}"); // 添加ISO文件路径
-                        else
-                            list.Add(entry); // 添加普通视频文件路径
-                    }
-                }
-            }
-               
-            }
-            return [.. list.Select(x => (x, virtualDisk))];
+            return list;
         }
+        if (path.EndsWith(bdmv, StringComparison.OrdinalIgnoreCase))
+        {
+            return path[^4..].Equals(bdmv, StringComparison.InvariantCultureIgnoreCase) ? [(Directory.GetParent(path).FullName, "",false)] : list;
+        }
+        var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories).ToList();
+        list.AddRange(pathlist.Where(x => Directory.Exists(x) && Path.GetFileName(x).Equals(bdmv, StringComparison.OrdinalIgnoreCase)).Select(x =>
+        {
+            string parentDir = Directory.GetParent(x).FullName;
+            return(parentDir, $"{Bluray}{parentDir}",false);
+        }));
+        var blurayRoots =list.Select(x=>x.path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        list.AddRange( pathlist.Where(x => FileExists(x)&& !blurayRoots.Any(root =>
+                         x.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))).Select(x => (x, Path.GetExtension(x).Equals(iso, StringComparison.InvariantCultureIgnoreCase) ? $"{Bluray}{x}" : "", true)));
+          return list;
+
+    }
 
 
 }
