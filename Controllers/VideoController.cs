@@ -55,16 +55,13 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
         }
         var m3u = new ConcurrentBag<string>();
         var m3upath = Path.Combine(Directory.GetCurrentDirectory(),  "wavfile.m3u");
-        if (FileExists(m3upath))
-        {
-            System.IO.File.Delete(m3upath);
-        }
+        System.IO.File.Delete(m3upath);
         var wavfile = ".wav";
         var jsonfile = ".json";
         var srtfile = ".srt";
         var assfile = ".ass";
         var wavlist = new List<(string inputpath, string savepath, string bluraypath)>();
-        var addjosn = new List<(string savepath, string srtpath)>();
+        var addjson = new List<(string savepath, string srtpath)>();
         var finallyjson= new List<(string savepath, string srtpath)>();
         foreach (var (path, bluraypath, isfile) in list)
         {
@@ -99,29 +96,26 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                 wavlist.Add((path, wav, bluraypath));
             }
         }
-        if (wavlist?.Count > 0)
-        {
-            await Parallel.ForEachAsync(wavlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
-            {
-                try
-                {
-                  
-                    await GetWavFileByVideo(x.inputpath, x.savepath, x.bluraypath, _);
-                    m3u.Add(x.savepath);
-                }
-                catch (System.Exception ex)
-                {
+        await Parallel.ForEachAsync(wavlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
+             {
+                 try
+                 {
 
-                    _logger.LogError(exception: ex, $"LogError: {x}");
-                }
-            });
-        }
+                     await GetWavFileByVideo(x.inputpath, x.savepath, x.bluraypath, _);
+                     m3u.Add(x.savepath);
+                 }
+                 catch (System.Exception ex)
+                 {
+
+                     _logger.LogError(exception: ex, $"LogError: {x}");
+                 }
+             });
         if (!m3u.IsEmpty)
         {
 
             await System.IO.File.WriteAllLinesAsync(m3upath, m3u, cancellationToken);
             await GetJsonFile(m3upath, cancellationToken);
-            addjosn.AddRange(m3u
+            addjson.AddRange(m3u
                   .Where(x => FileExists(Path.ChangeExtension(x, jsonfile)))
                   .Select(x => (
                         Path.ChangeExtension(x, jsonfile),
@@ -130,22 +124,23 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
                   )));
 
         }
-        if (addjosn.Count > 0||finallyjson.Count>0)
-        {
-            await Parallel.ForEachAsync([..addjosn,..finallyjson], new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
-           {
-               try
-               {
-                await GetSrtFile(x.savepath, x.srtpath, _);
+        List<(string savepath, string srtpath)> jsonlist = [.. addjson, .. finallyjson];
+        await Parallel.ForEachAsync(jsonlist, new ParallelOptions() { CancellationToken = cancellationToken }, async (x, _) =>
+             {
+                 try
+                 {
+                     await GetSrtFile(x.savepath, x.srtpath, _);
 
-               }
-               catch (Exception ex)
-               {
+                 }
+                 catch (Exception ex)
+                 {
 
-                   _logger.LogError(exception: ex, $"LogError: {x}");
-               }
-           });
-        }
+                     _logger.LogError(exception: ex, $"LogError: {x}");
+                 }
+             });
+        var dic= jsonlist.Where(x=>FileExists(x.srtpath) ).Select(x=> Path.ChangeExtension(x.srtpath, null)).ToHashSet();
+        List<string> removelist= [.. wavlist.Select(x =>   x.savepath), .. jsonlist.Select(x => x.savepath)];
+       removelist.Where(x=> dic.Contains(Path.ChangeExtension(x, null))).ToList().ForEach(System.IO.File.Delete);
         return Ok();
     }
     private static bool FileExists(string path) => System.IO.File.Exists(path);
@@ -361,26 +356,20 @@ public class VideoController(VideoProcessService VideoProcessService, ILogger<Vi
             var list = new List<(string path, string bluraypath,bool isfile)>();
          if (FileExists(path))
         {
-            var exten= Path.GetExtension(path);
-            var isiso= exten.Equals(iso, StringComparison.InvariantCultureIgnoreCase);
-            var isvirtualDisk= !string.IsNullOrEmpty(virtualDisk);
-            if (!isiso && !isvirtualDisk)
+            return (Path.GetExtension(path).Equals(iso, StringComparison.InvariantCultureIgnoreCase), !string.IsNullOrEmpty(virtualDisk)) switch
             {
-                return[(path,"",true)];
-            }
-            if (isiso && !isvirtualDisk)
-            {
-                return [(path,$"{Bluray}{path}",true)];
-            }
-            if (isiso && isvirtualDisk)
-            {
-                return [(path, $"{Bluray}{virtualDisk}",true)];
-            }
-            return list;
+                (false, false) => [(path, "", true)],
+                (true, false) => [(path, $"{Bluray}{path}", true)],
+                (true, true) => [(path, $"{Bluray}{virtualDisk}", true)],
+                _ => list,
+            };
         }
-        if (path.EndsWith(bdmv, StringComparison.OrdinalIgnoreCase))
+        if (Path.GetFileName(
+    Path.TrimEndingDirectorySeparator(path))
+    .Equals(bdmv, StringComparison.OrdinalIgnoreCase))
         {
-            return path[^4..].Equals(bdmv, StringComparison.InvariantCultureIgnoreCase) ? [(Directory.GetParent(path).FullName, "",false)] : list;
+            string parentDir = Directory.GetParent(path).FullName;
+            return [(parentDir,$"{Bluray}{parentDir}",  false)];
         }
         var pathlist = Directory.EnumerateFileSystemEntries(path, "*.*", SearchOption.AllDirectories).ToList();
         list.AddRange(pathlist.Where(x => Directory.Exists(x) && Path.GetFileName(x).Equals(bdmv, StringComparison.OrdinalIgnoreCase)).Select(x =>
